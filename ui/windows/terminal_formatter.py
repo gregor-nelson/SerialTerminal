@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QTextEdit
 from datetime import datetime
 import re
 from constants import TerminalColors
+from ui.resources import resource_manager
 
 
 class TerminalStreamFormatter:
@@ -110,26 +111,27 @@ class TerminalStreamFormatter:
         
     def _create_formats(self):
         """Create QTextCharFormat objects for styling."""
-        # Use system monospace font - trust Qt to pick the best one
-        monospace_font = "Consolas"  # Good default for Windows, Qt will fallback on other platforms
+        # Get monospace font from resource manager for consistency
+        # The QFont already has fallback chain configured
+        base_mono_font = resource_manager.get_monospace_font()
 
         # Default format
         self.formats['default'] = QTextCharFormat()
         self.formats['default'].setForeground(QColor(self.colors['default']))
-        self.formats['default'].setFontFamily(monospace_font)
+        self.formats['default'].setFont(base_mono_font)
 
         # Create formats for each color type
         for color_type, color_value in self.colors.items():
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(color_value))
-            fmt.setFontFamily(monospace_font)
+            fmt.setFont(base_mono_font)
             self.formats[color_type] = fmt
 
         # Create formats for each NMEA type
         for nmea_type, color in self.nmea_colors.items():
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(color))
-            fmt.setFontFamily(monospace_font)
+            fmt.setFont(base_mono_font)
             self.formats[f'nmea_{nmea_type}'] = fmt
     
     def _get_format(self, format_name: str, bold: bool = False) -> QTextCharFormat:

@@ -87,6 +87,7 @@ from PyQt6.QtGui import (
     QIcon, QPainter, QPixmap, QFont, QScreen
 )
 from PyQt6.QtSvg import QSvgRenderer
+from ui.resources import resource_manager
 
 
 # ============================================================================
@@ -649,12 +650,12 @@ class VirtualPortToolbar(QWidget):
 
         # Status label
         self.status_label = QLabel("Ready")
-        self.status_label.setFont(QFont("Segoe UI", 9))
+        self.status_label.setFont(resource_manager.get_app_font(size=9))
         layout.addWidget(self.status_label)
 
         # Availability counter
         self.counter_label = QLabel("")
-        self.counter_label.setFont(QFont("Segoe UI", 9))
+        self.counter_label.setFont(resource_manager.get_app_font(size=9))
         self.counter_label.setStyleSheet("color: #6C757D;")  # Subtle gray
         layout.addWidget(self.counter_label)
 
@@ -745,7 +746,7 @@ class VirtualPortDialog(QDialog):
         self.table.setColumnWidth(2, 100)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setFont(QFont("Consolas", 10))  # Monospace for port numbers
+        self.table.setFont(resource_manager.get_monospace_font(size=10))  # Monospace for port numbers
         self.table.setMinimumHeight(240)
 
         main_layout.addWidget(self.table)
@@ -873,7 +874,7 @@ class VirtualPortDialog(QDialog):
     def _create_port_cell(self, port_name: str) -> QTableWidgetItem:
         """Create a table cell item for a port name"""
         item = QTableWidgetItem(port_name)
-        item.setFont(QFont("Consolas", 10))
+        item.setFont(resource_manager.get_monospace_font(size=10))
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
 

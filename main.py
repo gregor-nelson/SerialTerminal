@@ -17,103 +17,38 @@ from ui.resources import resource_manager
 from constants import AppInfo
 
 
-# --- Terminal SVG Icon ---
-TERMINAL_ICON_SVG = """
-<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <!-- Terminal-specific gradients -->
-    <linearGradient id="terminalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#00ff88;stop-opacity:1" />
-      <stop offset="50%" style="stop-color:#00cc66;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#009944;stop-opacity:1" />
-    </linearGradient>
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = Path(__file__).parent
 
-    <linearGradient id="terminalHighlight" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.3" />
-      <stop offset="100%" style="stop-color:#ffffff;stop-opacity:0" />
-    </linearGradient>
-
-    <!-- Terminal screen effect -->
-    <filter id="screenGlow">
-      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-
-    <filter id="shadow">
-      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.3"/>
-    </filter>
-  </defs>
-
-  <!-- Terminal screen representation -->
-  <g transform="translate(128, 128)">
-
-    <!-- Terminal frame -->
-    <rect x="-100" y="-80" width="200" height="160" rx="15" fill="#1a1a1a" filter="url(#shadow)"/>
-    <rect x="-95" y="-75" width="190" height="150" rx="10" fill="#000000"/>
-
-    <!-- Terminal screen -->
-    <rect x="-85" y="-60" width="170" height="100" rx="5" fill="#0d1117" filter="url(#screenGlow)"/>
-
-    <!-- Terminal text lines -->
-    <g fill="url(#terminalGradient)" font-family="monospace" font-size="10">
-      <text x="-75" y="-40">$ serial-terminal</text>
-      <text x="-75" y="-25">Connected: COM3</text>
-      <text x="-75" y="-10">Baud: 115200</text>
-      <text x="-75" y="5">Data: 8N1</text>
-      <text x="-75" y="20">Status: Ready</text>
-    </g>
-
-    <!-- Cursor blink -->
-    <rect x="-20" y="15" width="8" height="12" fill="url(#terminalGradient)">
-      <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
-    </rect>
-
-    <!-- Control buttons -->
-    <g>
-      <!-- Power button -->
-      <circle cx="70" cy="-55" r="8" fill="url(#terminalGradient)" opacity="0.8"/>
-      <circle cx="70" cy="-55" r="4" fill="#ffffff" opacity="0.9"/>
-
-      <!-- Activity indicators -->
-      <circle cx="55" cy="-55" r="4" fill="#ff4444">
-        <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite"/>
-      </circle>
-      <circle cx="85" cy="-55" r="4" fill="#44ff44">
-        <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
-      </circle>
-    </g>
-
-    <!-- Bottom edge highlight -->
-    <rect x="-100" y="60" width="200" height="20" rx="15" fill="url(#terminalHighlight)"/>
-
-    <!-- Connection ports -->
-    <g transform="translate(0, 85)">
-      <rect x="-15" y="-5" width="30" height="10" rx="5" fill="url(#terminalGradient)"/>
-      <rect x="-12" y="-3" width="6" height="6" rx="2" fill="#ffffff" opacity="0.9"/>
-      <rect x="-2" y="-3" width="6" height="6" rx="2" fill="#ffffff" opacity="0.9"/>
-      <rect x="8" y="-3" width="6" height="6" rx="2" fill="#ffffff" opacity="0.9"/>
-    </g>
-  </g>
-</svg>
-"""
+    return os.path.join(base_path, relative_path)
 
 
 def create_terminal_icon():
-    """Create the terminal application icon from SVG data"""
-    svg_bytes = TERMINAL_ICON_SVG.encode('utf-8')
-    renderer = QSvgRenderer(svg_bytes)
+    """Create the terminal application icon from app.svg file"""
+    # Try to load from assets/icons/app.svg
+    icon_path = get_resource_path(os.path.join('assets', 'icons', 'app.svg'))
 
-    pixmap = QPixmap(256, 256)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    if os.path.exists(icon_path):
+        # Load SVG from file
+        renderer = QSvgRenderer(icon_path)
 
-    painter = QPainter(pixmap)
-    renderer.render(painter)
-    painter.end()
+        pixmap = QPixmap(256, 256)
+        pixmap.fill(Qt.GlobalColor.transparent)
 
-    return QIcon(pixmap)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+
+        return QIcon(pixmap)
+    else:
+        # Fallback to empty icon if file not found
+        print(f"Warning: Icon file not found at {icon_path}")
+        return QIcon()
 
 
 class TerminalSplashScreen(QSplashScreen):
@@ -153,7 +88,6 @@ class TerminalSplashScreen(QSplashScreen):
 
         # Get colors from palette
         from PyQt6.QtGui import QPalette
-        from ui.resources import resource_manager
         palette = self.palette()
         bg_color = palette.color(QPalette.ColorRole.Window)
         text_color = palette.color(QPalette.ColorRole.WindowText)

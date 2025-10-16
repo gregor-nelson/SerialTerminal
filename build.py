@@ -7,7 +7,6 @@ Builds both the main application and the elevated port manager helper.
 import subprocess
 import sys
 import shutil
-import os
 from pathlib import Path
 from datetime import datetime
 
@@ -146,7 +145,7 @@ class BuildScript:
 
         start_time = datetime.now()
 
-        # Step 1: Clean
+        # Step 1: Clean build artifacts
         self.clean_build_artifacts()
 
         # Step 2-3: Build both executables
@@ -155,7 +154,7 @@ class BuildScript:
             result = self.build_executable(spec_file, exe_name, idx)
             build_results.append(result)
 
-        # Step 4: Verify
+        # Step 4: Verify outputs
         verification_passed = self.verify_outputs()
 
         # Determine overall success

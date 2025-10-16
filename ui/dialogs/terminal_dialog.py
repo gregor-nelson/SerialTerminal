@@ -208,10 +208,11 @@ class TerminalPane(QWidget):
     splitRequested = pyqtSignal(object, str)  # (source_pane, direction)
     closeRequested = pyqtSignal(object)  # source_pane
     
-    def __init__(self, config: SerialConfig, parent=None, main_window=None):
+    def __init__(self, config: SerialConfig, parent=None, main_window=None, container=None):
         super().__init__(parent)
         self.config = config
         self.main_window = main_window
+        self.container = container
         self.formatter = TerminalStreamFormatter()
         self.serial_worker: Optional[SerialWorker] = None
         self.is_connected = False
@@ -358,6 +359,9 @@ class TerminalPane(QWidget):
         close = menu.addAction("Close Pane")
         close.setShortcut("Ctrl+Shift+W")
         close.triggered.connect(lambda: self.closeRequested.emit(self))
+        # Disable if only one pane remains
+        if self.container and len(self.container.panes) <= 1:
+            close.setEnabled(False)
         
         menu.addSeparator()
         
@@ -1615,7 +1619,7 @@ class SplitContainer(QWidget):
         
     def _create_pane(self, config: SerialConfig) -> TerminalPane:
         """Create a new terminal pane"""
-        pane = TerminalPane(config, main_window=self.main_window)
+        pane = TerminalPane(config, main_window=self.main_window, container=self)
         pane.splitRequested.connect(self._split_pane)
         pane.closeRequested.connect(self._close_pane)
         pane.focusChanged.connect(lambda focused: self._on_pane_focus(pane, focused))

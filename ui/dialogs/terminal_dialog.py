@@ -98,7 +98,7 @@ class SerialPortRegistry:
             try:
                 if hasattr(worker, 'serial_port') and worker.serial_port:
                     worker.serial_port.close()
-            except:
+            except Exception:
                 pass
 
 # Register cleanup on program exit
@@ -133,47 +133,81 @@ class SerialWorker(QThread):
         self.serial_port: Optional[serial.Serial] = None
         self.running = False
         self.write_queue = queue.Queue()
+        self._stop_closed_port = False  # Track if stop() closed the port
         
     def run(self):
         """Main thread loop"""
         try:
-            # Open serial port
+            # Calculate adaptive write timeout based on baud rate
+            # Formula: Time to transmit 256 bytes + 200ms safety margin
+            # Assumes 10 bits per byte (8 data + 1 start + 1 stop)
+            bits_per_byte = 10
+            buffer_bytes = 256
+            timeout_seconds = (buffer_bytes * bits_per_byte / self.config.baudrate) + 0.2
+            # Clamp between 0.5s (fast ports) and 10s (very slow ports)
+            adaptive_write_timeout = max(0.5, min(timeout_seconds, 10.0))
+
+            # Open serial port with adaptive timeouts to prevent blocking
             self.serial_port = serial.Serial(
                 port=self.config.port,
                 baudrate=self.config.baudrate,
                 bytesize=self.config.databits,
                 parity=self.config.parity,
                 stopbits=self.config.stopbits,
-                timeout=0.1
+                timeout=0.1,
+                write_timeout=adaptive_write_timeout  # Adaptive based on baud rate
             )
-            
-            # ADD THIS LINE - Register with cleanup registry
+
+            # Register with cleanup registry
             SerialPortRegistry.register(self)
-            
+
             self.running = True
             self.connectionStateChanged.emit(True)
-            
+
             while self.running:
                 # Read data if available
                 if self.serial_port.in_waiting > 0:
                     data = self.serial_port.read(self.serial_port.in_waiting)
                     self.dataReceived.emit(data)
-                
-                # Write data from queue
+
+                # Write data from queue with cancellation checking
                 try:
-                    while not self.write_queue.empty():
-                        data = self.write_queue.get_nowait()
-                        self.serial_port.write(data)
-                except queue.Empty:
-                    pass
+                    # Use timeout-based get to allow periodic cancellation checks
+                    while self.running:  # Check running flag
+                        try:
+                            data = self.write_queue.get(timeout=0.05)  # 50ms timeout
+                            if not self.running:  # Double-check before writing
+                                break
+                            self.serial_port.write(data)
+                        except queue.Empty:
+                            break  # No more data to write
+                        except serial.SerialTimeoutException:
+                            # Write timeout - port might be slow, continue
+                            pass
+                except Exception as e:
+                    # Log unexpected write errors but continue running
+                    print(f"Write error: {e}")
+
+                # Check for unsent data after loop exits due to shutdown
+                if not self.running and not self.write_queue.empty():
+                    lost_bytes = self.write_queue.qsize()
+                    warning_msg = f"Warning: {lost_bytes} data items not sent - disconnected before transmission complete"
+                    # Try to emit warning (may be blocked if cleanup() already called blockSignals)
+                    try:
+                        self.errorOccurred.emit(warning_msg)
+                    except (RuntimeError, AttributeError):
+                        pass  # Signal blocked or object deleted
+                    # Always log to console so it's visible
+                    print(warning_msg)
                     
         except serial.SerialException as e:
             self.errorOccurred.emit(str(e))
         finally:
-            # ADD THIS LINE - Unregister from cleanup registry
+            # Unregister from cleanup registry
             SerialPortRegistry.unregister(self)
-            
-            if self.serial_port and self.serial_port.is_open:
+
+            # Only close if stop() didn't already close it (prevent double-close)
+            if self.serial_port and self.serial_port.is_open and not self._stop_closed_port:
                 self.serial_port.close()
             self.connectionStateChanged.emit(False)  
                  
@@ -185,16 +219,18 @@ class SerialWorker(QThread):
         if self.serial_port and self.serial_port.is_open:
             try:
                 self.serial_port.close()
+                self._stop_closed_port = True  # Mark that stop() closed the port
             except Exception as e:
                 print(f"Error closing port during stop: {e}")
 
         # Wait for thread to finish - blocking call ensures port is fully released
         if self.isRunning():
-            if not self.wait(3000):  # 3 seconds timeout
-                print(f"Warning: Serial thread did not stop cleanly for {self.config.port}")
-                # Force termination if thread is stuck
-                self.terminate()
-                self.wait(1000)  # Wait for termination to complete   
+            if not self.wait(5000):  # 5 seconds - longer timeout for slow devices
+                print(f"Warning: Serial worker thread did not stop cleanly for {self.config.port}")
+                print(f"Thread may be hung - port may remain locked until application exit")
+                # DO NOT terminate() - it can corrupt port driver state
+                # The finally block (line 184-191) should still close the port
+                # OS will clean up thread on process exit   
     def write(self, data: bytes):
         """Queue data to be written"""
         if self.running:
@@ -245,7 +281,11 @@ class TerminalPane(QWidget):
         # Help display management
         self.help_displayed = False
         self.auto_scroll_state_before_help = True
-        
+
+        # Timer tracking for cleanup (prevent dangling references)
+        self.pending_baud_timer = None
+        self.pending_port_timer = None
+
         self._setup_ui()
         self._setup_context_menu()
         
@@ -785,44 +825,77 @@ class TerminalPane(QWidget):
             
     def disconnect(self):
         """Disconnect from serial port - ensures complete cleanup"""
-        if self.serial_worker:
-            self.serial_worker.stop()  # Now blocks until thread fully terminates
-            self.serial_worker = None
-
-        # Clear buffer and stop timer
-        self.line_buffer = ""
-        self.buffer_timer.stop()
+        # Delegate to cleanup() - single source of truth for all cleanup logic
+        self.cleanup()
     
     def cleanup(self):
         """Single point of cleanup for terminal pane"""
+        # STEP 1: Update UI state FIRST (before blocking signals or setting worker to None)
+        # This ensures toolbar/ribbon updates immediately without relying on signals
+        old_is_connected = self.is_connected
+        self.is_connected = False
+
+        # STEP 2: Manually update toolbar/ribbon BEFORE we block signals
+        # This ensures UI reflects disconnected state immediately (don't rely on signals)
+        if old_is_connected and self.main_window and hasattr(self.main_window, '_update_ribbon_connection_state'):
+            self.main_window._update_ribbon_connection_state()
+
+        # STEP 2b: Show disconnection message in terminal (only if we were connected)
+        if old_is_connected:
+            self.formatter.format_connection_end(self.terminal, self.config.port)
+
+        # STEP 3: Block ALL signals from worker (signals no longer needed for UI updates)
+        # This prevents any queued signals from being delivered after this point
         if self.serial_worker:
-            # Disconnect signals first to prevent crashes
+            self.serial_worker.blockSignals(True)
+
+        # STEP 4: Stop and cleanup all timers (including disconnect timeout signals)
+        for timer in [self.pending_baud_timer, self.pending_port_timer, self.buffer_timer]:
+            if timer:
+                try:
+                    timer.stop()
+                    # Disconnect timeout signal to prevent late delivery
+                    try:
+                        timer.timeout.disconnect()
+                    except (TypeError, RuntimeError):
+                        pass  # Signal already disconnected or no connections
+                except (RuntimeError, AttributeError):
+                    pass  # Timer already deleted
+
+        # Clear timer references
+        self.pending_baud_timer = None
+        self.pending_port_timer = None
+
+        # STEP 5: Stop worker thread (signals already blocked, safe)
+        if self.serial_worker:
+            self.serial_worker.stop()
+
+            # Wait for graceful shutdown (DO NOT use terminate() - Issue #13)
+            if not self.serial_worker.wait(5000):  # 5 seconds
+                # Log warning but don't terminate - see Issue #13 fix
+                print(f"Warning: Serial worker did not stop gracefully for {self.config.port}")
+                print(f"Thread may be hung - port may remain locked until application exit")
+                # Thread will be orphaned but port should still close via finally block
+
+            # Now safe to disconnect signals (worker stopped, no more emissions possible)
             try:
-                self.serial_worker.dataReceived.disconnect()
-                self.serial_worker.errorOccurred.disconnect()
-                self.serial_worker.connectionStateChanged.disconnect()
+                self.serial_worker.dataReceived.disconnect(self._on_data_received)
+                self.serial_worker.errorOccurred.disconnect(self._on_error)
+                self.serial_worker.connectionStateChanged.disconnect(self._on_connection_state_changed)
             except (TypeError, RuntimeError):
                 pass  # Signals already disconnected
-            
-            # Force stop worker and ensure thread termination
-            self.serial_worker.stop()
-            
-            # Force thread termination if it doesn't stop gracefully
-            if not self.serial_worker.wait(2000):  # Wait 2 seconds
-                self.serial_worker.terminate()
-                self.serial_worker.wait(1000)  # Wait another second for termination
-            
+
             self.serial_worker = None
-        
-        # Clear buffer and stop timer
+
+        # STEP 6: Clear buffer
         self.line_buffer = ""
-        self.buffer_timer.stop()
-        
-        # Mark as disconnected to prevent further operations
-        self.is_connected = False
             
     def _on_data_received(self, data: bytes):
         """Handle received data with proper line buffering"""
+        # Minimal guard - should never trigger if blockSignals works correctly (defense-in-depth)
+        if not self.serial_worker:
+            return
+
         # This method is called from worker thread via Qt signal/slot
         # Qt automatically handles thread safety for signal/slot connections
         try:
@@ -916,15 +989,24 @@ class TerminalPane(QWidget):
             
     def _on_error(self, error_msg: str):
         """Handle serial errors"""
+        # Minimal guard - should never trigger if blockSignals works correctly (defense-in-depth)
+        if not self.serial_worker:
+            return
+
         self.formatter.append_status(self.terminal, error_msg, "error")
         
     def _on_connection_state_changed(self, connected: bool):
         """Handle connection state changes"""
-        self.is_connected = connected
-        # Notify main window if this pane is active
-        if self.main_window and hasattr(self.main_window, '_update_ribbon_connection_state'):
-            self.main_window._update_ribbon_connection_state()
+        # Minimal guard - should never trigger if blockSignals works correctly (defense-in-depth)
+        if not self.serial_worker:
+            return
+
         if connected:
+            # Connection SUCCESS - update state and show connection message
+            self.is_connected = True
+            # Notify main window if this pane is active
+            if self.main_window and hasattr(self.main_window, '_update_ribbon_connection_state'):
+                self.main_window._update_ribbon_connection_state()
             # Reset baud rate detection on new connection
             self.reset_baud_rate_detection()
             self.formatter.format_connection_start(
@@ -933,7 +1015,11 @@ class TerminalPane(QWidget):
                 self.config.baudrate
             )
         else:
-            self.formatter.format_connection_end(self.terminal, self.config.port)
+            # Connection FAILED or port error - delegate to cleanup()
+            # This handles unexpected disconnections (port unplugged, errors, etc)
+            # Note: User-initiated disconnect calls cleanup() directly, which blocks this signal
+            # cleanup() will show the disconnection message
+            self.cleanup()
             
     def send_data(self, data: str):
         """Send data to serial port"""
@@ -1099,19 +1185,22 @@ class TerminalPane(QWidget):
             was_monitoring = getattr(self, 'monitoring_active', False)
             
             try:
-                # Graceful disconnect
+                # Graceful disconnect and cleanup (including timers)
                 if was_monitoring:
                     try:
                         self._stop_monitoring()
                     except AttributeError:
                         pass  # Monitoring not implemented yet
-                self.disconnect()
-                
+                self.cleanup()  # Use cleanup() to cancel all timers and disconnect
+
                 # Brief pause to ensure port is released (1.5s for Windows COM port cleanup)
                 from PyQt6.QtCore import QTimer
-                QTimer.singleShot(1500, lambda: self._complete_baud_rate_change(
-                    baud_rate, old_baud, port_name, was_monitoring
-                ))
+                self.pending_baud_timer = QTimer()
+                self.pending_baud_timer.setSingleShot(True)
+                self.pending_baud_timer.timeout.connect(
+                    lambda: self._complete_baud_rate_change(baud_rate, old_baud, port_name, was_monitoring)
+                )
+                self.pending_baud_timer.start(1500)
                 
             except Exception as e:
                 self.formatter.append_status(
@@ -1211,23 +1300,26 @@ class TerminalPane(QWidget):
         
         # Reset baud rate detection when port changes
         self.reset_baud_rate_detection()
-        
-        # Always cleanup existing worker before attempting new connection
+
+        # Always cleanup existing worker before attempting new connection (including timers)
         if self.serial_worker:
-            self.disconnect()
-        
+            self.cleanup()  # Use cleanup() to cancel all timers and disconnect
+
         # Show connecting message
         self.formatter.append_status(
             self.terminal,
             f"Connecting to {new_port}...",
             "info"
         )
-        
+
+        # Brief pause to ensure port is released, then connect (1.5s for Windows COM port cleanup)
         try:
-            # Brief pause to ensure port is released, then connect (1.5s for Windows COM port cleanup)
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(1500, self.connect)
-            
+            self.pending_port_timer = QTimer()
+            self.pending_port_timer.setSingleShot(True)
+            self.pending_port_timer.timeout.connect(self.connect)
+            self.pending_port_timer.start(1500)
+
         except Exception as connect_error:
             self.formatter.append_status(
                 self.terminal,
@@ -1493,7 +1585,7 @@ class WelcomeConfigWidget(QWidget):
 
         # Connect button using RibbonButton class for consistency
         from ui.components import RibbonButton
-        self.connect_btn = RibbonButton("Start", "enable")
+        self.connect_btn = RibbonButton("Connect", "enable")
         self.connect_btn.setToolTip("Start new serial terminal session")
         self.connect_btn.clicked.connect(self._handle_connect)
         
@@ -1583,14 +1675,42 @@ class WelcomeConfigWidget(QWidget):
             
     def _handle_connect(self):
         """Handle connect button click"""
+        # Validate baud rate
+        try:
+            baudrate = int(self.baud_combo.currentText())
+            if baudrate <= 0:
+                raise ValueError("Baud rate must be positive")
+            if baudrate < 110 or baudrate > 921600:
+                raise ValueError("Baud rate out of range (110-921600)")
+        except ValueError as e:
+            QMessageBox.warning(
+                self,
+                "Invalid Baud Rate",
+                f"Please enter a valid baud rate between 110 and 921600.\nError: {str(e)}"
+            )
+            return
+
+        # Validate port selection
+        port = self.port_combo.currentData()
+        if not port:
+            port = self.port_combo.currentText()
+
+        if not port or port in ["Scanning ports...", "No ports available", "Port scanning failed"]:
+            QMessageBox.warning(
+                self,
+                "No Port Selected",
+                "Please select a valid serial port"
+            )
+            return
+
         config = SerialConfig(
-            port=self.port_combo.currentData() or self.port_combo.currentText(),
-            baudrate=int(self.baud_combo.currentText()),
+            port=port,
+            baudrate=baudrate,
             databits=8,  # Default value
             parity="N",  # Default value
             stopbits=1.0  # Default value
         )
-        
+
         self.connectionRequested.emit(config)
     
 
@@ -1735,9 +1855,9 @@ class SplitContainer(QWidget):
         if len(self.panes) == 1:
             # Can't close last pane
             return
-            
-        # Disconnect serial
-        pane.disconnect()
+
+        # Disconnect serial and cleanup all resources
+        pane.cleanup()
         
         # Remove from list
         self.panes.remove(pane)
@@ -2188,39 +2308,7 @@ class SerialMonitorWindow(QMainWindow):
         # Apply to existing tabs
         self._apply_close_icon_to_tabs()
 
-        # Style the tab widget and tab bar for ultra-minimal clean look with white text
-        self.tab_widget.setStyleSheet(f"""
-            QTabWidget::pane {{
-                background-color: {window_bg.name()};
-                border: none;
-            }}
-            QTabBar::tab {{
-                background-color: {window_bg.name()};
-                color: #ffffff;
-                border: none;
-                padding: 8px 16px;
-                min-width: 100px;
-            }}
-            QTabBar::tab:selected {{
-                background-color: {window_bg.name()};
-                color: #ffffff;
-                border-bottom: 2px solid {highlight_color.name()};
-            }}
-            QTabBar::tab:hover {{
-                background-color: {window_bg.lighter(110).name()};
-            }}
-            QTabBar::close-button {{
-                background-color: transparent;
-                border: none;
-                border-radius: 2px;
-                margin: 2px;
-                padding: 2px;
-            }}
-            QTabBar::close-button:hover {{
-                background-color: rgba(255, 255, 255, 0.1);
-            }}
-        """)
-        
+       
     def _apply_close_icon_to_tabs(self):
         """Apply custom close button icon to all tabs"""
         if not self.close_button_icon:

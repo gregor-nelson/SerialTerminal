@@ -2,7 +2,7 @@
 
 from PyQt6.QtWidgets import QToolBar, QWidget, QHBoxLayout, QPushButton
 from PyQt6.QtCore import pyqtSignal, QSize
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QFont
 
 from ..resources import resource_manager
 
@@ -21,7 +21,10 @@ class RibbonButton(QPushButton):
                 self.setIcon(icon)
                 self.setIconSize(QSize(16, 16))
 
-        # Use default button styling
+        # Set medium font weight for better readability
+        font = self.font()
+        font.setWeight(QFont.Weight.Medium)
+        self.setFont(font)
 
     def update_icon(self, icon_name: str):
         """Update button icon dynamically."""

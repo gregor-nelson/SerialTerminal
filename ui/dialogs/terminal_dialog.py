@@ -9,7 +9,6 @@ import sys
 import serial
 import serial.tools.list_ports
 from typing import Optional, Dict, List
-from dataclasses import dataclass
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
@@ -23,62 +22,9 @@ from ui.windows.terminal_formatter import TerminalStreamFormatter
 from ui.resources import resource_manager
 # No color constants needed - trust Fusion theme
 from core.core import SerialPortInfo, PortScanner
+from core.serial_config import SerialConfig
 from ui.components import RibbonToolbar
-
-
-# Minimal icon SVG definitions
-class Icons:
-    """Icon set matching VirtualPortManager's circular colored design"""
-
-    @staticmethod
-    def play(palette):
-        """Play/Connect icon - blue circle with play symbol"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#0078D4" stroke="#106EBE" stroke-width="1"/>
-            <path d="M12 10 L22 16 L12 22 Z" fill="#FFFFFF"/>
-        </svg>"""
-
-    @staticmethod
-    def create(palette):
-        """New/Add icon - blue circle with plus (matching VirtualPortManager 'new')"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#0078D4" stroke="#106EBE" stroke-width="1"/>
-            <path d="M16 8 L16 24 M8 16 L24 16" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
-        </svg>"""
-
-    @staticmethod
-    def refresh(palette):
-        """Refresh icon - green circle with refresh arrows (exact VirtualPortManager design)"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#28A745" stroke="#1E7E34" stroke-width="1"/>
-            <path d="M16 9 A7 7 0 1 1 9 16 A7 7 0 0 1 12.8 11.2" stroke="#FFFFFF" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-            <path d="M11 9 L15 9 L15 13" stroke="#FFFFFF" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-        </svg>"""
-
-    @staticmethod
-    def settings(palette):
-        """Settings icon - purple circle with gear (exact VirtualPortManager configure design)"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#6F42C1" stroke="#5A2D91" stroke-width="1"/>
-            <g fill="#FFFFFF">
-                <circle cx="16" cy="16" r="8"/>
-                <rect x="15" y="6" width="2" height="3"/>
-                <rect x="23" y="15" width="3" height="2"/>
-                <rect x="15" y="23" width="2" height="3"/>
-                <rect x="6" y="15" width="3" height="2"/>
-                <rect x="21.5" y="8.5" width="2.1" height="2.1" transform="rotate(45 22.5 9.5)"/>
-                <rect x="21.5" y="21.4" width="2.1" height="2.1" transform="rotate(45 22.5 22.5)"/>
-                <rect x="8.4" y="21.4" width="2.1" height="2.1" transform="rotate(45 9.5 22.5)"/>
-                <rect x="8.4" y="8.5" width="2.1" height="2.1" transform="rotate(45 9.5 9.5)"/>
-                <circle cx="16" cy="16" r="3" fill="#6F42C1"/>
-            </g>
-        </svg>"""
-
-    @staticmethod
-    def terminal_settings(palette):
-        """Terminal window icon for app icon"""
-        color = palette.color(QPalette.ColorRole.ButtonText).name()
-        return f"""<svg width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="2" fill="none" stroke="{color}" stroke-width="2"/><path fill="{color}" d="M6 8l3 3-3 3m5 0h6"/></svg>"""
+from ui.common import Icons
 
 
 class SerialPortRegistry:
@@ -104,20 +50,6 @@ class SerialPortRegistry:
 # Register cleanup on program exit
 atexit.register(SerialPortRegistry.cleanup_all)
 
-
-# ===== DATA CLASSES =====
-@dataclass
-class SerialConfig:
-    """Serial port configuration"""
-    port: str
-    baudrate: int = 115200
-    databits: int = 8
-    parity: str = 'N'
-    stopbits: float = 1.0
-    
-    def get_display_string(self) -> str:
-        """Get display string for status bar"""
-        return f"{self.baudrate} {self.databits}{self.parity}{self.stopbits}"
 
 # ===== SERIAL WORKER =====
 class SerialWorker(QThread):

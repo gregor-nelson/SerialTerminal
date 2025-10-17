@@ -88,6 +88,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtSvg import QSvgRenderer
 from ui.resources import resource_manager
+from ui.common import Icons
 
 
 # ============================================================================
@@ -529,81 +530,6 @@ class ElevatedHelperWorker(QThread):
                 CloseHandle(self._process)
                 self._process = None
         super().terminate()
-
-
-# ============================================================================
-# UI Icons
-# ============================================================================
-
-class Icons:
-    """Circular SVG icons matching application design"""
-
-    # Color constants from terminal_dialog.py
-    BLUE_PRIMARY = "#0078D4"
-    BLUE_STROKE = "#106EBE"
-    GREEN_PRIMARY = "#28A745"
-    GREEN_STROKE = "#1E7E34"
-    PURPLE_PRIMARY = "#6F42C1"
-    PURPLE_STROKE = "#5A2D91"
-    RED_PRIMARY = "#DC3545"
-    RED_STROKE = "#B02A37"
-    YELLOW_WARNING = "#FFC107"
-
-    @staticmethod
-    def create():
-        """Blue circular create icon"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#0078D4" stroke="#106EBE" stroke-width="1"/>
-            <path d="M16 8 L16 24 M8 16 L24 16" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
-        </svg>"""
-
-    @staticmethod
-    def quick_setup():
-        """Green circular quick setup icon (lightning bolt)"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#28A745" stroke="#1E7E34" stroke-width="1"/>
-            <path d="M18 8 L10 16 L14 16 L14 24 L22 16 L18 16 Z" fill="#FFFFFF"/>
-        </svg>"""
-
-    @staticmethod
-    def remove():
-        """Red circular remove icon"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#DC3545" stroke="#B02A37" stroke-width="1"/>
-            <path d="M10 10 L22 22 M22 10 L10 22" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
-        </svg>"""
-
-    @staticmethod
-    def refresh():
-        """Green circular refresh icon"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#28A745" stroke="#1E7E34" stroke-width="1"/>
-            <path d="M16 9 A7 7 0 1 1 9 16 A7 7 0 0 1 12.8 11.2" stroke="#FFFFFF" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-            <path d="M11 9 L15 9 L15 13" stroke="#FFFFFF" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-        </svg>"""
-
-    @staticmethod
-    def close():
-        """Gray circular close icon"""
-        return """<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="16" cy="16" r="14" fill="#6C757D" stroke="#5A6268" stroke-width="1"/>
-            <path d="M10 10 L22 22 M22 10 L10 22" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
-        </svg>"""
-
-    @staticmethod
-    def svg_to_icon(svg_str: str) -> QIcon:
-        """Convert SVG string to QIcon"""
-        # Create pixmap
-        pixmap = QPixmap(32, 32)
-        pixmap.fill(Qt.GlobalColor.transparent)
-
-        # Render SVG
-        renderer = QSvgRenderer(svg_str.encode('utf-8'))
-        painter = QPainter(pixmap)
-        renderer.render(painter)
-        painter.end()
-
-        return QIcon(pixmap)
 
 
 class VirtualPortToolbar(QWidget):

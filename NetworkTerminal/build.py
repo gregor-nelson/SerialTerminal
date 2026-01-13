@@ -85,7 +85,7 @@ root_dir = Path(SPECPATH).parent
 assets_dir = root_dir / "assets"
 
 a = Analysis(
-    ['{self.ENTRY_POINT}'],
+    [str(root_dir / '{self.ENTRY_POINT}')],
     pathex=[str(root_dir)],
     binaries=[],
     datas=[

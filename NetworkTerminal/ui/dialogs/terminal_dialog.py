@@ -810,6 +810,7 @@ class WelcomeConfigWidget(QWidget):
         # Protocol selection
         self.protocol_combo = QComboBox()
         self.protocol_combo.addItems(["TCP", "UDP"])
+        self.protocol_combo.currentTextChanged.connect(self._on_protocol_changed)
         form_layout.addRow("Protocol:", self.protocol_combo)
 
         # Mode selection
@@ -829,10 +830,40 @@ class WelcomeConfigWidget(QWidget):
         self.port_input.setValue(5000)
         form_layout.addRow("Port:", self.port_input)
 
+        # === Advanced Options ===
+        # TCP options
+        self.keepalive_check = QCheckBox("Enable TCP Keepalive")
+        self.keepalive_check.setChecked(False)
+        form_layout.addRow("", self.keepalive_check)
+
+        self.nodelay_check = QCheckBox("Disable Nagle (TCP_NODELAY)")
+        self.nodelay_check.setChecked(False)
+        form_layout.addRow("", self.nodelay_check)
+
+        # UDP options
+        self.broadcast_check = QCheckBox("Enable Broadcast")
+        self.broadcast_check.setChecked(False)
+        self.broadcast_check.setVisible(False)  # Hidden by default (TCP selected)
+        form_layout.addRow("", self.broadcast_check)
+
+        # Timeout
+        self.timeout_spin = QDoubleSpinBox()
+        self.timeout_spin.setRange(0.1, 60.0)
+        self.timeout_spin.setValue(5.0)
+        self.timeout_spin.setSuffix(" sec")
+        form_layout.addRow("Timeout:", self.timeout_spin)
+
         # Connect button
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self._on_connect)
         form_layout.addRow("", self.connect_btn)
+
+    def _on_protocol_changed(self, protocol: str):
+        """Handle protocol change - show/hide relevant options"""
+        is_tcp = protocol == "TCP"
+        self.keepalive_check.setVisible(is_tcp)
+        self.nodelay_check.setVisible(is_tcp)
+        self.broadcast_check.setVisible(not is_tcp)
 
     def _on_mode_changed(self, mode: str):
         """Handle mode change"""
@@ -851,7 +882,11 @@ class WelcomeConfigWidget(QWidget):
             host=self.host_input.text().strip() or "127.0.0.1",
             port=self.port_input.value(),
             protocol=self.protocol_combo.currentText(),
-            mode=self.mode_combo.currentText().lower()
+            mode=self.mode_combo.currentText().lower(),
+            keepalive=self.keepalive_check.isChecked(),
+            nodelay=self.nodelay_check.isChecked(),
+            broadcast=self.broadcast_check.isChecked(),
+            timeout=self.timeout_spin.value()
         )
         self.connectionRequested.emit(config)
 

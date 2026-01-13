@@ -1,0 +1,4 @@
+# NetworkTerminal Requirements
+# Note: No pyserial needed - network sockets are in Python stdlib
+
+PyQt6>=6.4.0

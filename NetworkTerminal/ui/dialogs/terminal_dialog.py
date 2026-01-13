@@ -406,17 +406,18 @@ class NetworkTerminalPane(QWidget):
         old_is_connected = self.is_connected
         self.is_connected = False
 
-        # Update toolbar/ribbon BEFORE we block signals
+        # Block signals from worker EARLY to prevent race conditions
+        # This ensures no new signals are processed during cleanup
+        if self.network_worker:
+            self.network_worker.blockSignals(True)
+
+        # Update toolbar/ribbon
         if old_is_connected and self.main_window and hasattr(self.main_window, '_update_ribbon_connection_state'):
             self.main_window._update_ribbon_connection_state()
 
         # Show disconnection message
         if old_is_connected:
             self._format_connection_end()
-
-        # Block signals from worker
-        if self.network_worker:
-            self.network_worker.blockSignals(True)
 
         # Stop buffer timer
         if self.buffer_timer:

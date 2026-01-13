@@ -1,6 +1,6 @@
 """Ribbon-style toolbar for Network Terminal commands."""
 
-from PyQt6.QtWidgets import QToolBar, QWidget, QHBoxLayout, QPushButton
+from PyQt6.QtWidgets import QToolBar, QWidget, QHBoxLayout, QPushButton, QMenu
 from PyQt6.QtCore import pyqtSignal, QSize
 from PyQt6.QtGui import QIcon, QFont
 
@@ -33,6 +33,24 @@ class RibbonButton(QPushButton):
             self.setIcon(icon)
 
 
+class RibbonMenuButton(RibbonButton):
+    """Ribbon button that shows a dropdown menu when clicked."""
+
+    def __init__(self, text: str, icon_name: str = None, parent=None):
+        super().__init__(text, icon_name, parent)
+        self._menu = QMenu(self)
+        self.clicked.connect(self._show_menu)
+
+    def menu(self) -> QMenu:
+        """Get the dropdown menu."""
+        return self._menu
+
+    def _show_menu(self):
+        """Show the dropdown menu below the button."""
+        pos = self.mapToGlobal(self.rect().bottomLeft())
+        self._menu.exec(pos)
+
+
 class RibbonToolbar(QToolBar):
     """Ribbon-style toolbar for Network Terminal commands."""
 
@@ -42,6 +60,8 @@ class RibbonToolbar(QToolBar):
     toggle_connection = pyqtSignal()
     clear_terminal = pyqtSignal()
     show_settings = pyqtSignal()
+    show_history = pyqtSignal()
+    recent_selected = pyqtSignal(object)  # Emits NetworkConfig
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,9 +81,17 @@ class RibbonToolbar(QToolBar):
         main_layout.setSpacing(4)  # 4px spacing between buttons
         main_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Create 4 buttons in flat layout (no Refresh button for network)
+        # Create buttons
         self.new_button = RibbonButton("New", "new")
         self.new_button.setToolTip("New connection (Ctrl+N)")
+
+        # Recent connections dropdown
+        self.recent_button = RibbonMenuButton("Recent", "refresh")
+        self.recent_button.setToolTip("Recent connections")
+
+        # History button
+        self.history_button = RibbonButton("History", "configure")
+        self.history_button.setToolTip("Connection history and favorites")
 
         # Refresh button hidden for network (kept for API compatibility)
         self.refresh_button = RibbonButton("Refresh", "refresh")
@@ -77,10 +105,12 @@ class RibbonToolbar(QToolBar):
         self.clear_button.setToolTip("Clear terminal output")
 
         self.settings_button = RibbonButton("Settings", "configure")
-        self.settings_button.setToolTip("Application settings")
+        self.settings_button.setToolTip("Terminal settings")
 
         # Add buttons to layout
         main_layout.addWidget(self.new_button)
+        main_layout.addWidget(self.recent_button)
+        main_layout.addWidget(self.history_button)
         main_layout.addWidget(self.refresh_button)
         main_layout.addWidget(self.connect_button)
         main_layout.addWidget(self.clear_button)
@@ -97,6 +127,23 @@ class RibbonToolbar(QToolBar):
         self.connect_button.clicked.connect(self.toggle_connection.emit)
         self.clear_button.clicked.connect(self.clear_terminal.emit)
         self.settings_button.clicked.connect(self.show_settings.emit)
+        self.history_button.clicked.connect(self.show_history.emit)
+
+    def populate_recent_menu(self, recent_configs):
+        """Populate the recent connections dropdown menu."""
+        menu = self.recent_button.menu()
+        menu.clear()
+
+        if not recent_configs:
+            no_recent = menu.addAction("No recent connections")
+            no_recent.setEnabled(False)
+            return
+
+        for config in recent_configs:
+            action = menu.addAction(f"{config.protocol} {config.host}:{config.port}")
+            action.triggered.connect(
+                lambda checked, c=config: self.recent_selected.emit(c)
+            )
 
     def set_connection_state(self, is_connected: bool):
         """Update connect/disconnect button based on connection state."""

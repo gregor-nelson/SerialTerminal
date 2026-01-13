@@ -1092,15 +1092,15 @@ class NetworkMonitorWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup main window UI"""
-        # Add menu bar BEFORE ribbon toolbar
-        self._setup_menu_bar()
-
-        # Create ribbon toolbar
+        # Create ribbon toolbar (no menu bar - all features in ribbon)
         self.ribbon = RibbonToolbar()
         self.addToolBar(self.ribbon)
 
         # Connect ribbon signals
         self._connect_ribbon_signals()
+
+        # Populate recent connections dropdown
+        self._populate_recent_menu()
 
         # Central widget
         central = QWidget()
@@ -1134,32 +1134,8 @@ class NetworkMonitorWindow(QMainWindow):
         self.ribbon.toggle_connection.connect(self._toggle_connection)
         self.ribbon.clear_terminal.connect(self._clear_current_terminal)
         self.ribbon.show_settings.connect(self._show_settings_menu)
-
-    def _setup_menu_bar(self):
-        """Setup menu bar with File menu"""
-        menu_bar = self.menuBar()
-
-        # File menu
-        file_menu = menu_bar.addMenu("&File")
-
-        new_action = file_menu.addAction("&New Connection")
-        new_action.setShortcut("Ctrl+N")
-        new_action.triggered.connect(self._new_connection)
-
-        file_menu.addSeparator()
-
-        history_action = file_menu.addAction("Connection &History...")
-        history_action.triggered.connect(self._show_history_dialog)
-
-        # Recent connections submenu
-        self.recent_menu = file_menu.addMenu("&Recent Connections")
-        self._populate_recent_menu()
-
-        file_menu.addSeparator()
-
-        exit_action = file_menu.addAction("E&xit")
-        exit_action.setShortcut("Ctrl+Q")
-        exit_action.triggered.connect(self.close)
+        self.ribbon.show_history.connect(self._show_history_dialog)
+        self.ribbon.recent_selected.connect(self._create_tab)
 
     def _show_history_dialog(self):
         """Show connection history dialog"""
@@ -1170,23 +1146,9 @@ class NetworkMonitorWindow(QMainWindow):
         dialog.exec()
 
     def _populate_recent_menu(self):
-        """Populate recent connections menu"""
-        self.recent_menu.clear()
-
+        """Populate recent connections dropdown in ribbon"""
         recent = self.connection_manager.get_recent_configs(limit=10)
-
-        if not recent:
-            no_recent = self.recent_menu.addAction("No recent connections")
-            no_recent.setEnabled(False)
-            return
-
-        for config in recent:
-            action = self.recent_menu.addAction(
-                f"{config.protocol} {config.host}:{config.port}"
-            )
-            action.triggered.connect(
-                lambda checked, c=config: self._create_tab(c)
-            )
+        self.ribbon.populate_recent_menu(recent)
 
     def _setup_close_button_icon(self):
         """Set up custom close button - done in _apply_window_style"""

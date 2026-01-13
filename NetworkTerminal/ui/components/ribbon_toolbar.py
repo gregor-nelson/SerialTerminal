@@ -60,8 +60,8 @@ class RibbonToolbar(QToolBar):
     toggle_connection = pyqtSignal()
     clear_terminal = pyqtSignal()
     show_settings = pyqtSignal()
-    show_history = pyqtSignal()
     recent_selected = pyqtSignal(object)  # Emits NetworkConfig
+    favorite_selected = pyqtSignal(object)  # Emits NetworkConfig
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,9 +89,9 @@ class RibbonToolbar(QToolBar):
         self.recent_button = RibbonMenuButton("Recent", "refresh")
         self.recent_button.setToolTip("Recent connections")
 
-        # History button
-        self.history_button = RibbonButton("History", "configure")
-        self.history_button.setToolTip("Connection history and favorites")
+        # Favorites dropdown
+        self.favorites_button = RibbonMenuButton("Favorites", "configure")
+        self.favorites_button.setToolTip("Favorite connections")
 
         # Refresh button hidden for network (kept for API compatibility)
         self.refresh_button = RibbonButton("Refresh", "refresh")
@@ -110,7 +110,7 @@ class RibbonToolbar(QToolBar):
         # Add buttons to layout
         main_layout.addWidget(self.new_button)
         main_layout.addWidget(self.recent_button)
-        main_layout.addWidget(self.history_button)
+        main_layout.addWidget(self.favorites_button)
         main_layout.addWidget(self.refresh_button)
         main_layout.addWidget(self.connect_button)
         main_layout.addWidget(self.clear_button)
@@ -127,7 +127,6 @@ class RibbonToolbar(QToolBar):
         self.connect_button.clicked.connect(self.toggle_connection.emit)
         self.clear_button.clicked.connect(self.clear_terminal.emit)
         self.settings_button.clicked.connect(self.show_settings.emit)
-        self.history_button.clicked.connect(self.show_history.emit)
 
     def populate_recent_menu(self, recent_configs):
         """Populate the recent connections dropdown menu."""
@@ -143,6 +142,22 @@ class RibbonToolbar(QToolBar):
             action = menu.addAction(f"{config.protocol} {config.host}:{config.port}")
             action.triggered.connect(
                 lambda checked, c=config: self.recent_selected.emit(c)
+            )
+
+    def populate_favorites_menu(self, favorite_configs):
+        """Populate the favorites dropdown menu."""
+        menu = self.favorites_button.menu()
+        menu.clear()
+
+        if not favorite_configs:
+            no_favorites = menu.addAction("No favorites")
+            no_favorites.setEnabled(False)
+            return
+
+        for config in favorite_configs:
+            action = menu.addAction(f"{config.protocol} {config.host}:{config.port}")
+            action.triggered.connect(
+                lambda checked, c=config: self.favorite_selected.emit(c)
             )
 
     def set_connection_state(self, is_connected: bool):

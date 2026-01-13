@@ -244,6 +244,10 @@ class NetworkTerminalPane(QWidget):
             manager.add_favorite(self.config)
             self.formatter.append_status(self.terminal, "Added to favorites", "status")
 
+        # Refresh favorites dropdown in ribbon
+        if hasattr(self.main_window, '_populate_favorites_menu'):
+            self.main_window._populate_favorites_menu()
+
     def _create_font_size_menu(self, menu: QMenu):
         """Create font size submenu matching main GUI pattern"""
         common_sizes = [8, 10, 12, 14, 16]
@@ -1099,8 +1103,9 @@ class NetworkMonitorWindow(QMainWindow):
         # Connect ribbon signals
         self._connect_ribbon_signals()
 
-        # Populate recent connections dropdown
+        # Populate dropdown menus
         self._populate_recent_menu()
+        self._populate_favorites_menu()
 
         # Central widget
         central = QWidget()
@@ -1134,21 +1139,18 @@ class NetworkMonitorWindow(QMainWindow):
         self.ribbon.toggle_connection.connect(self._toggle_connection)
         self.ribbon.clear_terminal.connect(self._clear_current_terminal)
         self.ribbon.show_settings.connect(self._show_settings_menu)
-        self.ribbon.show_history.connect(self._show_history_dialog)
         self.ribbon.recent_selected.connect(self._create_tab)
-
-    def _show_history_dialog(self):
-        """Show connection history dialog"""
-        from ui.dialogs.connection_dialog import ConnectionHistoryDialog
-
-        dialog = ConnectionHistoryDialog(self.connection_manager, self)
-        dialog.configSelected.connect(self._create_tab)
-        dialog.exec()
+        self.ribbon.favorite_selected.connect(self._create_tab)
 
     def _populate_recent_menu(self):
         """Populate recent connections dropdown in ribbon"""
         recent = self.connection_manager.get_recent_configs(limit=10)
         self.ribbon.populate_recent_menu(recent)
+
+    def _populate_favorites_menu(self):
+        """Populate favorites dropdown in ribbon"""
+        favorites = self.connection_manager.get_favorites()
+        self.ribbon.populate_favorites_menu(favorites)
 
     def _setup_close_button_icon(self):
         """Set up custom close button - done in _apply_window_style"""

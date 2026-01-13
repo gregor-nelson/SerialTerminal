@@ -1301,6 +1301,23 @@ class NetworkMonitorWindow(QMainWindow):
 
         QShortcut(QKeySequence("Ctrl+Shift+W"), self, self._close_current_pane)
 
+        # Font size shortcuts
+        QShortcut(QKeySequence("Ctrl++"), self, self._increase_active_pane_font)
+        QShortcut(QKeySequence("Ctrl+="), self, self._increase_active_pane_font)  # For keyboards without numpad
+        QShortcut(QKeySequence("Ctrl+-"), self, self._decrease_active_pane_font)
+
+    def _increase_active_pane_font(self):
+        """Increase font size of the active pane"""
+        container = self._get_current_container()
+        if container and container.active_pane:
+            container.active_pane._increase_font_size()
+
+    def _decrease_active_pane_font(self):
+        """Decrease font size of the active pane"""
+        container = self._get_current_container()
+        if container and container.active_pane:
+            container.active_pane._decrease_font_size()
+
     def _show_initial_connection_dialog(self):
         """Show welcome tab when window opens"""
         if self.tab_widget.count() == 0:

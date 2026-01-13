@@ -1264,14 +1264,8 @@ class NetworkMonitorWindow(QMainWindow):
             print(f"Error removing welcome tab: {e}")
 
     def _new_connection(self):
-        """Create new tab with welcome screen"""
-        # Import here to avoid circular import
-        from ui.dialogs.connection_dialog import QuickConnectDialog
-
-        dialog = QuickConnectDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            config = dialog.get_config()
-            self._create_tab(config)
+        """Create new tab with inline connection settings"""
+        self._show_welcome_tab()
 
     def _create_tab(self, config: NetworkConfig):
         """Create a new tab with split container"""

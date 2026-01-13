@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QMenu, QMainWindow,
     QTabWidget, QStatusBar, QSplitter, QSizePolicy, QTabBar, QApplication,
     QFormLayout, QLineEdit, QSpinBox, QComboBox, QGroupBox, QPushButton,
-    QCheckBox, QDoubleSpinBox, QDialog
+    QCheckBox, QDoubleSpinBox, QDialog, QLabel, QWidgetAction
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QSize, QByteArray, QEvent
 from PyQt6.QtGui import (
@@ -207,19 +207,58 @@ class NetworkTerminalPane(QWidget):
         return menu
 
     def _create_connection_settings_menu(self, menu: QMenu):
-        """Create connection settings submenu with favorite toggle"""
-        # Show current connection info
+        """Create connection settings submenu with editable host/port and favorite toggle"""
+        # Show current connection info (read-only protocol/mode)
         info = menu.addAction(f"{self.config.protocol} {self.config.mode.title()}")
         info.setEnabled(False)
 
         menu.addSeparator()
 
-        # Protocol info
-        host_action = menu.addAction(f"Host: {self.config.host}")
-        host_action.setEnabled(False)
+        # === Editable Host Field ===
+        host_widget = QWidget()
+        host_layout = QHBoxLayout(host_widget)
+        host_layout.setContentsMargins(8, 4, 8, 4)
+        host_label = QLabel("Host:")
+        host_label.setFixedWidth(40)
+        self._host_edit = QLineEdit(self.config.host)
+        self._host_edit.setMinimumWidth(150)
+        # Disable host editing in server mode (bound to 0.0.0.0)
+        if self.config.mode == 'server':
+            self._host_edit.setEnabled(False)
+            self._host_edit.setToolTip("Host cannot be changed in server mode")
+        host_layout.addWidget(host_label)
+        host_layout.addWidget(self._host_edit)
 
-        port_action = menu.addAction(f"Port: {self.config.port}")
-        port_action.setEnabled(False)
+        host_action = QWidgetAction(menu)
+        host_action.setDefaultWidget(host_widget)
+        menu.addAction(host_action)
+
+        # === Editable Port Field ===
+        port_widget = QWidget()
+        port_layout = QHBoxLayout(port_widget)
+        port_layout.setContentsMargins(8, 4, 8, 4)
+        port_label = QLabel("Port:")
+        port_label.setFixedWidth(40)
+        self._port_spin = QSpinBox()
+        self._port_spin.setRange(1, 65535)
+        self._port_spin.setValue(self.config.port)
+        self._port_spin.setMinimumWidth(150)
+        port_layout.addWidget(port_label)
+        port_layout.addWidget(self._port_spin)
+
+        port_action = QWidgetAction(menu)
+        port_action.setDefaultWidget(port_widget)
+        menu.addAction(port_action)
+
+        menu.addSeparator()
+
+        # === Apply & Reconnect Button ===
+        if self.is_connected:
+            apply_action = menu.addAction("Apply && Reconnect")
+            apply_action.triggered.connect(self._apply_connection_settings)
+        else:
+            apply_action = menu.addAction("Apply Settings")
+            apply_action.triggered.connect(self._apply_connection_settings)
 
         menu.addSeparator()
 
@@ -247,6 +286,58 @@ class NetworkTerminalPane(QWidget):
         # Refresh favorites dropdown in ribbon
         if hasattr(self.main_window, '_populate_favorites_menu'):
             self.main_window._populate_favorites_menu()
+
+    def _apply_connection_settings(self):
+        """Apply changed host/port settings and reconnect if needed"""
+        # Get new values from the menu widgets
+        new_host = self._host_edit.text().strip() if hasattr(self, '_host_edit') else self.config.host
+        new_port = self._port_spin.value() if hasattr(self, '_port_spin') else self.config.port
+
+        # Check if anything changed
+        if new_host == self.config.host and new_port == self.config.port:
+            self.formatter.append_status(self.terminal, "No changes to apply", "status")
+            return
+
+        # Validate host
+        if not new_host:
+            self.formatter.append_status(self.terminal, "Host cannot be empty", "error")
+            return
+
+        old_host = self.config.host
+        old_port = self.config.port
+        was_connected = self.is_connected
+
+        # Create updated config (preserving all other settings)
+        self.config = self.config.copy(host=new_host, port=new_port)
+
+        # Update tab title if we have access to main window
+        if self.main_window and hasattr(self.main_window, 'tab_widget'):
+            tab_widget = self.main_window.tab_widget
+            # Find our tab by checking containers
+            for i in range(tab_widget.count()):
+                widget = tab_widget.widget(i)
+                if hasattr(widget, 'panes') and self in widget.panes:
+                    tab_widget.setTabText(i, self.config.get_short_name())
+                    break
+
+        # Log the change
+        if was_connected:
+            self.formatter.append_status(
+                self.terminal,
+                f"Settings changed: {old_host}:{old_port} → {new_host}:{new_port}",
+                "status"
+            )
+            # Disconnect and reconnect with new settings
+            self.disconnect()
+            # Give a small delay before reconnecting
+            QTimer.singleShot(100, self.connect)
+            self.formatter.append_status(self.terminal, "Reconnecting...", "status")
+        else:
+            self.formatter.append_status(
+                self.terminal,
+                f"Settings updated: {new_host}:{new_port}",
+                "status"
+            )
 
     def _create_font_size_menu(self, menu: QMenu):
         """Create font size submenu matching main GUI pattern"""

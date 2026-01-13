@@ -207,7 +207,7 @@ class NetworkTerminalPane(QWidget):
         return menu
 
     def _create_connection_settings_menu(self, menu: QMenu):
-        """Create connection settings submenu"""
+        """Create connection settings submenu with favorite toggle"""
         # Show current connection info
         info = menu.addAction(f"{self.config.protocol} {self.config.mode.title()}")
         info.setEnabled(False)
@@ -220,6 +220,29 @@ class NetworkTerminalPane(QWidget):
 
         port_action = menu.addAction(f"Port: {self.config.port}")
         port_action.setEnabled(False)
+
+        menu.addSeparator()
+
+        # Favorite toggle
+        if self.main_window and hasattr(self.main_window, 'connection_manager'):
+            is_favorite = self.main_window.connection_manager.is_favorite(self.config)
+            fav_text = "Remove from Favorites" if is_favorite else "Add to Favorites"
+            favorite_action = menu.addAction(self.checkbox_icon(is_favorite), fav_text)
+            favorite_action.triggered.connect(self._toggle_favorite)
+
+    def _toggle_favorite(self):
+        """Toggle favorite status for current connection"""
+        if not self.main_window or not hasattr(self.main_window, 'connection_manager'):
+            return
+
+        manager = self.main_window.connection_manager
+
+        if manager.is_favorite(self.config):
+            manager.remove_favorite(self.config)
+            self.formatter.append_status(self.terminal, "Removed from favorites", "status")
+        else:
+            manager.add_favorite(self.config)
+            self.formatter.append_status(self.terminal, "Added to favorites", "status")
 
     def _create_font_size_menu(self, menu: QMenu):
         """Create font size submenu matching main GUI pattern"""
@@ -1006,6 +1029,10 @@ class NetworkMonitorWindow(QMainWindow):
         self.setWindowTitle("Network Terminal")
         self.setMinimumSize(800, 600)
 
+        # Add ConnectionManager integration
+        from core.connection_manager import ConnectionManager
+        self.connection_manager = ConnectionManager()
+
         # Set custom window icon
         icon_pixmap = QPixmap(64, 64)
         icon_pixmap.fill(Qt.GlobalColor.transparent)
@@ -1029,6 +1056,9 @@ class NetworkMonitorWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup main window UI"""
+        # Add menu bar BEFORE ribbon toolbar
+        self._setup_menu_bar()
+
         # Create ribbon toolbar
         self.ribbon = RibbonToolbar()
         self.addToolBar(self.ribbon)
@@ -1068,6 +1098,59 @@ class NetworkMonitorWindow(QMainWindow):
         self.ribbon.toggle_connection.connect(self._toggle_connection)
         self.ribbon.clear_terminal.connect(self._clear_current_terminal)
         self.ribbon.show_settings.connect(self._show_settings_menu)
+
+    def _setup_menu_bar(self):
+        """Setup menu bar with File menu"""
+        menu_bar = self.menuBar()
+
+        # File menu
+        file_menu = menu_bar.addMenu("&File")
+
+        new_action = file_menu.addAction("&New Connection")
+        new_action.setShortcut("Ctrl+N")
+        new_action.triggered.connect(self._new_connection)
+
+        file_menu.addSeparator()
+
+        history_action = file_menu.addAction("Connection &History...")
+        history_action.triggered.connect(self._show_history_dialog)
+
+        # Recent connections submenu
+        self.recent_menu = file_menu.addMenu("&Recent Connections")
+        self._populate_recent_menu()
+
+        file_menu.addSeparator()
+
+        exit_action = file_menu.addAction("E&xit")
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+
+    def _show_history_dialog(self):
+        """Show connection history dialog"""
+        from ui.dialogs.connection_dialog import ConnectionHistoryDialog
+
+        dialog = ConnectionHistoryDialog(self.connection_manager, self)
+        dialog.configSelected.connect(self._create_tab)
+        dialog.exec()
+
+    def _populate_recent_menu(self):
+        """Populate recent connections menu"""
+        self.recent_menu.clear()
+
+        recent = self.connection_manager.get_recent_configs(limit=10)
+
+        if not recent:
+            no_recent = self.recent_menu.addAction("No recent connections")
+            no_recent.setEnabled(False)
+            return
+
+        for config in recent:
+            action = self.recent_menu.addAction(
+                f"{config.protocol} {config.host}:{config.port}"
+            )
+            action.triggered.connect(
+                lambda checked, c=config: self._create_tab(c)
+            )
 
     def _setup_close_button_icon(self):
         """Set up custom close button - done in _apply_window_style"""
@@ -1201,6 +1284,12 @@ class NetworkMonitorWindow(QMainWindow):
         index = self.tab_widget.addTab(container, tab_title)
         self.tab_widget.setCurrentIndex(index)
         self._apply_close_icon_to_tabs()
+
+        # Record in history
+        self.connection_manager.record_connection(config)
+
+        # Refresh recent menu
+        self._populate_recent_menu()
 
         # Auto-connect the first pane
         if container.active_pane:

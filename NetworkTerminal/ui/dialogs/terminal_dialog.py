@@ -1265,7 +1265,32 @@ class NetworkMonitorWindow(QMainWindow):
 
     def _new_connection(self):
         """Create new tab with inline connection settings"""
-        self._show_welcome_tab()
+        try:
+            welcome_widget = WelcomeConfigWidget()
+            welcome_widget.connectionRequested.connect(
+                lambda config, w=welcome_widget: self._handle_inline_connection(config, w)
+            )
+
+            index = self.tab_widget.addTab(welcome_widget, "New tab")
+            self.tab_widget.setCurrentIndex(index)
+            self._apply_close_icon_to_tabs()
+        except Exception as e:
+            print(f"Error creating new tab: {e}")
+
+    def _handle_inline_connection(self, config: NetworkConfig, welcome_widget):
+        """Handle connection from inline welcome widget and replace it with terminal"""
+        try:
+            # Find and remove this specific welcome widget
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.widget(i) == welcome_widget:
+                    self.tab_widget.removeTab(i)
+                    welcome_widget.deleteLater()
+                    break
+
+            # Create the actual connection tab
+            self._create_tab(config)
+        except Exception as e:
+            print(f"Error handling inline connection: {e}")
 
     def _create_tab(self, config: NetworkConfig):
         """Create a new tab with split container"""

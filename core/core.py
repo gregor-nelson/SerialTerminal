@@ -11,6 +11,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from collections import deque
 from enum import Enum
 from dataclasses import field
 
@@ -39,6 +40,9 @@ except ImportError:
 
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex, QSettings
 from PyQt6.QtWidgets import QApplication
+
+# Re-export com0com classes for backwards compatibility
+from .com0com import DefaultConfig, Com0comProcess
 
 
 class PortStatus(Enum):
@@ -133,9 +137,9 @@ class AdvancedStatistics:
     
     def __post_init__(self):
         if self.rx_packet_sizes is None:
-            self.rx_packet_sizes = []
+            self.rx_packet_sizes = deque(maxlen=1000)
         if self.tx_packet_sizes is None:
-            self.tx_packet_sizes = []
+            self.tx_packet_sizes = deque(maxlen=1000)
 
 
 class PortCapabilityAnalyzer:
@@ -623,26 +627,6 @@ class SettingsManager:
         self.settings.sync()
 
 
-class DefaultConfig:
-    """Default COM pairs and settings to create on application launch"""
-    # Default pairs to create: CNCA31<->CNCB31 (COM131<->COM132) and CNCA41<->CNCB41 (COM141<->COM142)
-    default_pairs = [
-        {"port_a": "CNCA31", "port_b": "CNCB31", "com_a": "COM131", "com_b": "COM132"},
-        {"port_a": "CNCA41", "port_b": "CNCB41", "com_a": "COM141", "com_b": "COM142"}
-    ]
-    default_baud = "115200"
-    # Settings for each port in the pair
-    default_settings = {
-        "EmuBR": "yes",        # Baud rate timing emulation
-        "EmuOverrun": "yes"    # Buffer overrun emulation
-    }
-    # Output port mapping for GUI pre-population
-    output_mapping = [
-        {"port": "COM131", "baud": "115200"},
-        {"port": "COM141", "baud": "115200"}
-    ]
-
-
 class ResponsiveWindowManager:
     """Manages responsive window sizing and layout decisions"""
     
@@ -869,31 +853,28 @@ class PortScanner(QThread):
             # Check if winreg is available and working
             if not hasattr(winreg, 'OpenKey'):
                 raise ImportError("winreg module not properly available")
-                
-            # Open the SERIALCOMM registry key
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM")
-            
-            # Enumerate all values
-            i = 0
-            while i < 256:  # Reasonable limit to prevent infinite loops
-                try:
-                    device_name, port_name, _ = winreg.EnumValue(key, i)
-                    
-                    # Classify the port type
-                    port_info = self.classify_port(device_name, port_name)
-                    ports.append(port_info)
-                    
-                    i += 1
-                except OSError:
-                    # No more values
-                    break
-                except Exception as e:
-                    # Skip this value and continue
-                    i += 1
-                    continue
-            
-            winreg.CloseKey(key)
-            
+
+            # Open the SERIALCOMM registry key with context manager for guaranteed cleanup
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM") as key:
+                # Enumerate all values
+                i = 0
+                while i < 256:  # Reasonable limit to prevent infinite loops
+                    try:
+                        device_name, port_name, _ = winreg.EnumValue(key, i)
+
+                        # Classify the port type
+                        port_info = self.classify_port(device_name, port_name)
+                        ports.append(port_info)
+
+                        i += 1
+                    except OSError:
+                        # No more values
+                        break
+                    except Exception:
+                        # Skip this value and continue
+                        i += 1
+                        continue
+
         except FileNotFoundError:
             # Registry key doesn't exist - this is normal on some systems
             pass
@@ -978,7 +959,7 @@ class PortScanner(QThread):
                 return (0, num)  # COM ports first
             else:
                 return (1, port_name)  # Other ports second
-        except:
+        except (ValueError, TypeError):
             return (2, port_name)  # Fallback
     
     def enhance_port_information(self, ports: List[SerialPortInfo]) -> List[SerialPortInfo]:
@@ -1069,7 +1050,7 @@ class Hub4comProcess(QThread):
         super().__init__()
         self.command = command
         self.process = None
-        self.should_stop = False
+        self._stop_event = threading.Event()  # Thread-safe stop signal
     
     def run(self):
         try:
@@ -1102,14 +1083,14 @@ class Hub4comProcess(QThread):
             self.process_started.emit()
             
             # Read output line by line
-            while self.process.poll() is None and not self.should_stop:
+            while self.process.poll() is None and not self._stop_event.is_set():
                 try:
                     line = self.process.stdout.readline()
                     if line:
                         self.output_received.emit(line.strip())
-                except:
+                except Exception:
                     break
-            
+
             self.process_stopped.emit()
             
         except FileNotFoundError:
@@ -1118,8 +1099,14 @@ class Hub4comProcess(QThread):
             self.error_occurred.emit(f"Failed to start hub4com: {str(e)}")
     
     def stop_process(self):
-        self.should_stop = True
+        self._stop_event.set()
         if self.process and self.process.poll() is None:
+            # Close stdout to unblock readline() in worker thread
+            if self.process.stdout:
+                try:
+                    self.process.stdout.close()
+                except Exception:
+                    pass
             # Give hub4com 2 seconds to cleanup gracefully
             self.process.terminate()
             try:
@@ -1127,288 +1114,34 @@ class Hub4comProcess(QThread):
             except subprocess.TimeoutExpired:
                 self.process.kill()
     
-    def cleanup_com_ports(self):
-        """Force release all COM ports by restarting com0com service"""
+    def cleanup_com_ports(self) -> tuple:
+        """Force release all COM ports by restarting com0com service.
+
+        Returns:
+            tuple: (success: bool, message: str)
+        """
         try:
             # Stop com0com service
-            subprocess.run(['net', 'stop', 'com0com'], 
-                         capture_output=True, check=False)
+            stop_result = subprocess.run(
+                ['net', 'stop', 'com0com'],
+                capture_output=True, text=True, timeout=10
+            )
             # Start com0com service
-            subprocess.run(['net', 'start', 'com0com'], 
-                         capture_output=True, check=False)
-        except Exception:
-            # Ignore service restart errors
-            pass
+            start_result = subprocess.run(
+                ['net', 'start', 'com0com'],
+                capture_output=True, text=True, timeout=10
+            )
 
+            if start_result.returncode != 0:
+                return (False, f"Service restart failed: {start_result.stderr.strip()}")
+            return (True, "Service restarted successfully")
 
-class Com0comProcess(QThread):
-    """Thread to execute com0com setupc commands"""
-    command_completed = pyqtSignal(bool, str)  # success, output
-    command_output = pyqtSignal(str)
-    pairs_checked = pyqtSignal(list)  # Emitted with existing pairs list
-    
-    def __init__(self, command_args, operation_type="command"):
-        super().__init__()
-        self.setupc_path = r"C:\Program Files (x86)\com0com\setupc.exe"
-        self.command_args = command_args
-        self.operation_type = operation_type  # "command", "list", "create_default", "check_and_create_default"
-        
-    def run(self):
-        try:
-            if self.operation_type == "create_default":
-                self._create_default_pairs()
-            elif self.operation_type == "check_and_create_default":
-                self._check_and_create_default_pairs()
-            elif self.operation_type == "list":
-                self._list_existing_pairs()
-            else:
-                self._execute_command()
-                
         except subprocess.TimeoutExpired:
-            self.command_completed.emit(False, "Command timed out")
+            return (False, "Service command timed out")
         except FileNotFoundError:
-            self.command_completed.emit(False, f"setupc.exe not found at {self.setupc_path}")
+            return (False, "net command not found")
         except Exception as e:
-            self.command_completed.emit(False, f"Error: {str(e)}")
-    
-    def _execute_command(self):
-        """Execute a standard setupc command"""
-        cmd = [self.setupc_path] + self.command_args
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        output = result.stdout + result.stderr
-        success = result.returncode == 0
-        
-        self.command_completed.emit(success, output)
-    
-    def _list_existing_pairs(self):
-        """List existing COM0COM pairs"""
-        cmd = [self.setupc_path, "list"]
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if result.returncode == 0:
-            existing_pairs = self._parse_pairs_output(result.stdout)
-            self.pairs_checked.emit(existing_pairs)
-        else:
-            self.pairs_checked.emit([])
-    
-    def _create_default_pairs(self):
-        """Create default COM pairs if they don't exist"""
-        # First, list existing pairs
-        list_cmd = [self.setupc_path, "list"]
-        list_result = subprocess.run(
-            list_cmd,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        existing_pairs = []
-        if list_result.returncode == 0:
-            existing_pairs = self._parse_pairs_output(list_result.stdout)
-        
-        # Check which default pairs need to be created
-        default_config = DefaultConfig()
-        created_pairs = []
-        
-        for pair_config in default_config.default_pairs:
-            port_a, port_b = pair_config["port_a"], pair_config["port_b"]
-            com_a, com_b = pair_config["com_a"], pair_config["com_b"]
-            
-            # Check if this pair already exists
-            pair_exists = any(
-                (p.get("port_a") == port_a and p.get("port_b") == port_b) or
-                (p.get("com_a") == com_a and p.get("com_b") == com_b)
-                for p in existing_pairs
-            )
-            
-            if not pair_exists:
-                # Create the pair with specific settings
-                create_cmd = [
-                    self.setupc_path, "install",
-                    f"PortName={com_a},EmuBR=yes,EmuOverrun=yes,AllDataBits=yes,AddRTTO=100,AddRITO=100",
-                    f"PortName={com_b},EmuBR=yes,EmuOverrun=yes,AllDataBits=yes,AddRTTO=100,AddRITO=100"
-                ]
-                
-                create_result = subprocess.run(
-                    create_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=45
-                )
-                
-                if create_result.returncode == 0:
-                    created_pairs.append(f"{com_a}<->{com_b}")
-        
-        if created_pairs:
-            success_msg = f"Successfully created virtual COM port pairs: {', '.join(created_pairs)} with baud rate timing and buffer overrun protection enabled"
-            self.command_completed.emit(True, success_msg)
-        else:
-            self.command_completed.emit(True, "Virtual COM port pairs are already configured and ready for marine operations")
-    
-    def _parse_pairs_output(self, output: str) -> List[Dict]:
-        """Parse setupc list output to extract existing pairs"""
-        pairs = []
-        lines = output.strip().split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if 'PortName=' in line:
-                # Extract port information from setupc output
-                # This is a simplified parser - may need refinement based on actual output format
-                if 'COM' in line:
-                    # Try to extract COM port number
-                    import re
-                    com_match = re.search(r'COM(\d+)', line)
-                    if com_match:
-                        com_num = com_match.group(1)
-                        pairs.append({
-                            "com_a": f"COM{com_num}",
-                            "com_b": "",  # Would need to parse paired port
-                            "port_a": "",
-                            "port_b": "",
-                            "raw_line": line
-                        })
-        
-        return pairs
-    
-    def _parse_com0com_output(self, output: str) -> Dict:
-        """Parse com0com list output to extract existing pairs"""
-        pairs = {}
-        lines = output.strip().split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith('command>'):
-                parts = line.split(None, 1)
-                if len(parts) >= 1:
-                    port = parts[0]
-                    params = parts[1] if len(parts) > 1 else ""
-                    
-                    if port.startswith('CNCA'):
-                        pair_num = port[4:]  # Extract number after "CNCA"
-                        if pair_num not in pairs:
-                            pairs[pair_num] = {}
-                        pairs[pair_num]['A'] = (port, params)
-                    elif port.startswith('CNCB'):
-                        pair_num = port[4:]  # Extract number after "CNCB"
-                        if pair_num not in pairs:
-                            pairs[pair_num] = {}
-                        pairs[pair_num]['B'] = (port, params)
-        
-        return pairs
-    
-    def _extract_actual_port_name(self, virtual_name: str, params: str) -> str:
-        """Extract the actual COM port name from parameters"""
-        if not params:
-            return virtual_name
-        
-        if "RealPortName=" in params:
-            real_name = params.split("RealPortName=")[1].split(",")[0]
-            if real_name and real_name != "-":
-                return real_name
-        
-        if "PortName=" in params:
-            port_name = params.split("PortName=")[1].split(",")[0]
-            if port_name and port_name not in ["-", "COM#"]:
-                return port_name
-        
-        return virtual_name
-    
-    def _check_and_create_default_pairs(self):
-        """Check which default pairs exist using setupc.exe list and only create missing ones"""
-        try:
-            # First, get existing pairs using setupc.exe list command
-            list_cmd = [self.setupc_path, "list"]
-            list_result = subprocess.run(
-                list_cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            existing_pairs_dict = {}
-            existing_com_ports = set()
-            
-            if list_result.returncode == 0:
-                # Parse the existing pairs
-                parsed_pairs = self._parse_com0com_output(list_result.stdout)
-                
-                # Extract COM port names from existing pairs
-                for pair_num, pair_data in parsed_pairs.items():
-                    if 'A' in pair_data and 'B' in pair_data:
-                        port_a, params_a = pair_data['A']
-                        port_b, params_b = pair_data['B']
-                        
-                        # Get actual COM port names
-                        com_a = self._extract_actual_port_name(port_a, params_a)
-                        com_b = self._extract_actual_port_name(port_b, params_b)
-                        
-                        existing_com_ports.add(com_a)
-                        existing_com_ports.add(com_b)
-                        existing_pairs_dict[f"{com_a}<->{com_b}"] = True
-            
-            # Check which default pairs need to be created
-            default_config = DefaultConfig()
-            created_pairs = []
-            existing_pairs = []
-            
-            for pair_config in default_config.default_pairs:
-                com_a, com_b = pair_config["com_a"], pair_config["com_b"]
-                pair_key = f"{com_a}<->{com_b}"
-                
-                # Check if both COM ports exist
-                pair_exists = com_a in existing_com_ports and com_b in existing_com_ports
-                
-                if pair_exists:
-                    existing_pairs.append(pair_key)
-                else:
-                    # Create the missing pair
-                    create_cmd = [
-                        self.setupc_path, "install",
-                        f"PortName={com_a},EmuBR=yes,EmuOverrun=yes,AllDataBits=yes,AddRTTO=100,AddRITO=100",
-                        f"PortName={com_b},EmuBR=yes,EmuOverrun=yes,AllDataBits=yes,AddRTTO=100,AddRITO=100"
-                    ]
-                    
-                    create_result = subprocess.run(
-                        create_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=45
-                    )
-                    
-                    if create_result.returncode == 0:
-                        created_pairs.append(pair_key)
-            
-            # Build status message
-            messages = []
-            if existing_pairs:
-                messages.append(f"Found existing virtual COM port pairs: {', '.join(existing_pairs)}")
-            if created_pairs:
-                messages.append(f"Successfully created new virtual COM port pairs: {', '.join(created_pairs)} with baud rate timing and buffer overrun protection enabled")
-            
-            if messages:
-                final_message = ". ".join(messages) + ". All virtual COM port pairs are now ready for marine operations."
-            else:
-                final_message = "Virtual COM port configuration completed successfully."
-            
-            self.command_completed.emit(True, final_message)
-            
-        except Exception as e:
-            # Fallback to original behavior if detection fails
-            self._create_default_pairs()
+            return (False, f"Unexpected error: {e}")
 
 
 # ============================================================================
@@ -1469,9 +1202,10 @@ class SerialPortMonitor(QThread):
         # Operation flags
         self.monitoring = False
         self.ser = None
-        
-        # Thread safety for TX operations
-        self.tx_mutex = QMutex()
+
+        # Thread safety
+        self.tx_mutex = QMutex()  # TX operations mutex
+        self._stop_event = threading.Event()  # Thread-safe stop signal
         
     def start_monitoring(self):
         """Start monitoring the serial port."""
@@ -1497,8 +1231,9 @@ class SerialPortMonitor(QThread):
             
             self.rx_window = []
             self.tx_window = []
-            
-            # Start the monitor thread
+
+            # Clear stop event and start the monitor thread
+            self._stop_event.clear()
             self.monitoring = True
             self.start()
             
@@ -1513,21 +1248,23 @@ class SerialPortMonitor(QThread):
         """Stop monitoring the serial port."""
         if not self.monitoring:
             return
-            
+
+        # Signal thread to stop (thread-safe)
+        self._stop_event.set()
         self.monitoring = False
         self.stats["is_monitoring"] = False
-        
+
         # Wait for thread to exit
         if self.isRunning():
             self.wait(1000)
-        
-        # Close the port if open
+
+        # Close the port if open (after thread has stopped)
         if self.ser and self.ser.is_open:
             try:
                 self.ser.close()
-            except:
+            except Exception:
                 pass
-    
+
     def run(self):
         """Main monitoring loop running in the thread."""
         last_stats_update = time.time()
@@ -1564,7 +1301,7 @@ class SerialPortMonitor(QThread):
             self.error_occurred.emit(f"Failed to initialize monitoring for {self.port_name}: {str(e)}")
             self.ser = None
         
-        while self.monitoring:
+        while not self._stop_event.is_set():
             try:
                 # If we have an open serial port, monitor it
                 if self.ser and self.ser.is_open:
@@ -1576,46 +1313,47 @@ class SerialPortMonitor(QThread):
                             self.stats["rx_bytes"] += len(data)
                             now = time.time()
                             self.rx_window.append((now, len(data)))
-                            
+
                             # Process for advanced statistics
                             self._process_rx_data(data, now)
-                            
+
                             # Emit the data
                             self.data_received.emit(data)
-                
+
                 # Update running time and rates periodically
                 now = time.time()
                 if now - last_stats_update >= 1.0:  # Update stats every second
                     self._update_rates(now)
                     if self.stats["start_time"]:
                         self.stats["running_time"] = (datetime.now() - self.stats["start_time"]).total_seconds()
-                    
+
                     # Finalize any pending packets based on timeout
                     if self.current_rx_buffer and (now - self.last_rx_timestamp) > self.packet_gap_threshold:
                         self._finalize_rx_packet(self.last_rx_timestamp, now - self.last_rx_timestamp)
                     if self.current_tx_buffer and (now - self.last_tx_timestamp) > self.packet_gap_threshold:
                         self._finalize_tx_packet(self.last_tx_timestamp, now - self.last_tx_timestamp)
-                    
+
                     # Emit updated stats
                     self.stats_updated.emit(self.stats.copy())
                     last_stats_update = now
-                
-                # Short sleep to prevent CPU thrashing
-                time.sleep(0.1)
-                
+
+                # Interruptible sleep - exits immediately if stop event is set
+                self._stop_event.wait(0.1)
+
             except Exception as e:
                 self.stats["errors"] += 1
                 self._handle_serial_error(e)
                 self.error_occurred.emit(f"Monitor error: {str(e)}")
-                time.sleep(0.5)  # Wait before retrying
+                # Interruptible wait before retrying
+                self._stop_event.wait(0.5)
         
         # Ensure port is closed on exit
         if self.ser and self.ser.is_open:
             try:
                 self.ser.close()
-            except:
+            except Exception:
                 pass
-    
+
     def _update_rates(self, now):
         """
         Update RX and TX rates based on windowed data.

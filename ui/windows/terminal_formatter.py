@@ -7,7 +7,6 @@ applying consistent styling and color-coding for serial port communication.
 Follows the same professional styling as CommandFormatter and OutputLogFormatter.
 """
 
-import threading
 from PyQt6.QtGui import QTextCharFormat, QColor, QFont, QTextCursor
 from PyQt6.QtWidgets import QTextEdit
 from datetime import datetime
@@ -27,7 +26,6 @@ class TerminalStreamFormatter:
         """Initialize the formatter with color definitions for different data types."""
         # Auto-scroll preference
         self.auto_scroll_enabled = True
-        self._scroll_lock = threading.Lock()
         
         # Terminal color scheme for data flow
         self.colors = {
@@ -120,12 +118,19 @@ class TerminalStreamFormatter:
         self.formats['default'].setForeground(QColor(self.colors['default']))
         self.formats['default'].setFont(base_mono_font)
 
-        # Create formats for each color type
+        # Create formats for each color type (regular and bold variants)
         for color_type, color_value in self.colors.items():
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(color_value))
             fmt.setFont(base_mono_font)
             self.formats[color_type] = fmt
+
+            # Pre-create bold variant to avoid object creation per message
+            bold_fmt = QTextCharFormat()
+            bold_fmt.setForeground(QColor(color_value))
+            bold_fmt.setFont(base_mono_font)
+            bold_fmt.setFontWeight(QFont.Weight.Bold)
+            self.formats[f'{color_type}_bold'] = bold_fmt
 
         # Create formats for each NMEA type
         for nmea_type, color in self.nmea_colors.items():
@@ -133,13 +138,15 @@ class TerminalStreamFormatter:
             fmt.setForeground(QColor(color))
             fmt.setFont(base_mono_font)
             self.formats[f'nmea_{nmea_type}'] = fmt
-    
+
     def _get_format(self, format_name: str, bold: bool = False) -> QTextCharFormat:
         """Get a format by name, optionally with bold."""
-        fmt = QTextCharFormat(self.formats.get(format_name, self.formats['default']))
         if bold:
-            fmt.setFontWeight(QFont.Weight.Bold)
-        return fmt
+            # Use pre-cached bold format if available
+            bold_key = f'{format_name}_bold'
+            if bold_key in self.formats:
+                return self.formats[bold_key]
+        return self.formats.get(format_name, self.formats['default'])
     
     def _detect_nmea_message_type(self, data: str) -> str:
         """
@@ -213,9 +220,10 @@ class TerminalStreamFormatter:
         # Only update the cursor position if auto-scroll is enabled
         if self.is_auto_scroll_enabled():
             text_edit.setTextCursor(cursor)
-        
-        # Add newline if needed
-        if text_edit.toPlainText() and not text_edit.toPlainText().endswith('\n'):
+
+        # Add newline if needed (cache toPlainText to avoid O(2n) call)
+        plain_text = text_edit.toPlainText()
+        if plain_text and not plain_text.endswith('\n'):
             cursor.insertText('\n')
         
         # Add timestamp if requested
@@ -260,9 +268,10 @@ class TerminalStreamFormatter:
         cursor = text_edit.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         text_edit.setTextCursor(cursor)
-        
-        # Add spacing
-        if text_edit.toPlainText() and not text_edit.toPlainText().endswith('\n'):
+
+        # Add spacing (cache toPlainText to avoid O(2n) call)
+        plain_text = text_edit.toPlainText()
+        if plain_text and not plain_text.endswith('\n'):
             cursor.insertText('\n')
         cursor.insertText('\n')
         
@@ -305,34 +314,28 @@ class TerminalStreamFormatter:
     
     def _auto_scroll_if_enabled(self, text_edit: QTextEdit):
         """Auto-scroll to bottom if auto-scroll is enabled."""
-        if not text_edit:
+        if not text_edit or not self.auto_scroll_enabled:
             return
-        
+
         try:
-            with self._scroll_lock:
-                if not self.auto_scroll_enabled:
-                    return
-                
-                scrollbar = text_edit.verticalScrollBar()
-                if scrollbar:
-                    # Only auto-scroll if we're near the bottom
-                    max_value = scrollbar.maximum()
-                    current_value = scrollbar.value()
-                    
-                    if max_value - current_value <= 10:
-                        scrollbar.setValue(max_value)
-        except:
-            pass  # Silently ignore scroll errors
-    
+            scrollbar = text_edit.verticalScrollBar()
+            if scrollbar:
+                # Only auto-scroll if we're near the bottom
+                max_value = scrollbar.maximum()
+                current_value = scrollbar.value()
+
+                if max_value - current_value <= 10:
+                    scrollbar.setValue(max_value)
+        except Exception as e:
+            print(f"Auto-scroll error: {e}")
+
     def set_auto_scroll_enabled(self, enabled: bool):
         """Set auto-scroll enabled state."""
-        with self._scroll_lock:
-            self.auto_scroll_enabled = enabled
-    
+        self.auto_scroll_enabled = enabled
+
     def is_auto_scroll_enabled(self) -> bool:
         """Check if auto-scroll is enabled."""
-        with self._scroll_lock:
-            return self.auto_scroll_enabled
+        return self.auto_scroll_enabled
     
     def force_scroll_to_bottom(self, text_edit: QTextEdit):
         """Force scroll to bottom regardless of auto-scroll setting."""

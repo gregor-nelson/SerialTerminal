@@ -231,6 +231,8 @@ class TerminalPane(QWidget):
         # Terminal display
         self.terminal = QTextEdit()
         self.terminal.setReadOnly(True)
+        self.terminal.setUndoRedoEnabled(False)  # Prevent unbounded undo stack growth
+        self.terminal.document().setMaximumBlockCount(10000)  # Limit to 10k lines
         self.terminal.setFont(resource_manager.get_monospace_font(size=10))
         self.terminal.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         

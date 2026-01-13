@@ -336,7 +336,20 @@ class TerminalStreamFormatter:
     def is_auto_scroll_enabled(self) -> bool:
         """Check if auto-scroll is enabled."""
         return self.auto_scroll_enabled
-    
+
+    def update_font_size(self, size: int):
+        """
+        Update the font size for all cached text formats.
+
+        Args:
+            size: New font size in points
+        """
+        # Update all formats with new font size
+        for fmt in self.formats.values():
+            font = fmt.font()
+            font.setPointSize(size)
+            fmt.setFont(font)
+
     def force_scroll_to_bottom(self, text_edit: QTextEdit):
         """Force scroll to bottom regardless of auto-scroll setting."""
         if text_edit:

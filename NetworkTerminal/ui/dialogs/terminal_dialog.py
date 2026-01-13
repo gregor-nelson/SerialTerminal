@@ -760,24 +760,31 @@ class NetworkTerminalPane(QWidget):
         font = self.terminal.font()
         font.setPointSize(size)
         self.terminal.setFont(font)
+        # Update formatter's cached formats to match
+        self.formatter.update_font_size(size)
 
     def _increase_font_size(self):
         """Increase terminal font size"""
         font = self.terminal.font()
         if font.pointSize() < 24:
-            font.setPointSize(font.pointSize() + 1)
+            new_size = font.pointSize() + 1
+            font.setPointSize(new_size)
             self.terminal.setFont(font)
+            self.formatter.update_font_size(new_size)
 
     def _decrease_font_size(self):
         """Decrease terminal font size"""
         font = self.terminal.font()
         if font.pointSize() > 8:
-            font.setPointSize(font.pointSize() - 1)
+            new_size = font.pointSize() - 1
+            font.setPointSize(new_size)
             self.terminal.setFont(font)
+            self.formatter.update_font_size(new_size)
 
     def _reset_font_size(self):
         """Reset font size to default"""
         self.terminal.setFont(resource_manager.get_monospace_font(size=10))
+        self.formatter.update_font_size(10)
 
     def _show_help(self):
         """Show help inline in the terminal window"""

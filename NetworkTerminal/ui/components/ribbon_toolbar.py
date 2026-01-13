@@ -1,4 +1,4 @@
-"""Ribbon-style toolbar for Serial Terminal commands."""
+"""Ribbon-style toolbar for Network Terminal commands."""
 
 from PyQt6.QtWidgets import QToolBar, QWidget, QHBoxLayout, QPushButton
 from PyQt6.QtCore import pyqtSignal, QSize
@@ -34,11 +34,11 @@ class RibbonButton(QPushButton):
 
 
 class RibbonToolbar(QToolBar):
-    """Ribbon-style toolbar with Serial Terminal commands."""
+    """Ribbon-style toolbar for Network Terminal commands."""
 
-    # Signals for terminal actions (simplified to 5 primary actions)
+    # Signals for terminal actions
     new_connection = pyqtSignal()
-    refresh_ports = pyqtSignal()
+    refresh_ports = pyqtSignal()  # Kept for API compatibility, but hidden
     toggle_connection = pyqtSignal()
     clear_terminal = pyqtSignal()
     show_settings = pyqtSignal()
@@ -58,18 +58,20 @@ class RibbonToolbar(QToolBar):
         # Main widget to hold ribbon buttons (flat layout, no groups)
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
-        main_layout.setSpacing(4)  # 4px spacing between buttons like SerialRouter
+        main_layout.setSpacing(4)  # 4px spacing between buttons
         main_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Create 5 buttons in flat layout
+        # Create 4 buttons in flat layout (no Refresh button for network)
         self.new_button = RibbonButton("New", "new")
         self.new_button.setToolTip("New connection (Ctrl+N)")
 
+        # Refresh button hidden for network (kept for API compatibility)
         self.refresh_button = RibbonButton("Refresh", "refresh")
-        self.refresh_button.setToolTip("Refresh available ports")
+        self.refresh_button.setToolTip("Refresh")
+        self.refresh_button.setVisible(False)  # Hidden for network
 
         self.connect_button = RibbonButton("Connect", "enable")
-        self.connect_button.setToolTip("Connect to serial port")
+        self.connect_button.setToolTip("Connect to network")
 
         self.clear_button = RibbonButton("Clear", "remove")
         self.clear_button.setToolTip("Clear terminal output")
@@ -100,11 +102,11 @@ class RibbonToolbar(QToolBar):
         """Update connect/disconnect button based on connection state."""
         if is_connected:
             self.connect_button.setText("Disconnect")
-            self.connect_button.setToolTip("Disconnect from serial port")
+            self.connect_button.setToolTip("Disconnect from network")
             self.connect_button.update_icon("disable")
         else:
             self.connect_button.setText("Connect")
-            self.connect_button.setToolTip("Connect to serial port")
+            self.connect_button.setToolTip("Connect to network")
             self.connect_button.update_icon("enable")
 
     def set_pane_actions_enabled(self, enabled: bool):
